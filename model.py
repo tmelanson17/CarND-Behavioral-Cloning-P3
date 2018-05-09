@@ -7,7 +7,7 @@ import os
 from tqdm import tqdm
 
 
-from keras.layers import Dense, Flatten, Input, Lambda
+from keras.layers import Dense, Flatten, Input, Lambda, Cropping2D
 from keras.models import Model, Sequential
 
 
@@ -19,12 +19,26 @@ def create_split(df):
     return df_split
 
 
+
 from sklearn.utils import shuffle
 from tqdm import tqdm 
+from skimage.io import imread, imshow
+import numpy as np
+
+def flipped(im_label_pair_gen):
+    im_label_pairs = list(im_label_pair_gen)
+    im_label_pairs_flipped = [(np.fliplr(im), -label) for im, label in im_label_pairs]
+    return im_label_pairs + im_label_pairs_flipped
+
+def augment(images, labels):
+    im_label_pairs = zip(images, labels)
+    im_label_pairs_proc = flipped(im_label_pairs)
+    return zip(*im_label_pairs_proc)
+        
 
 # Simple generator for now,
 # TODO: upgrade to Keras Sequential
-class Dataset:
+class DatasetGenerator:
     
     def __init__(self, datasize, img_name = 'value', label_name='steering', validation_split=0.2):
         self.data_dir = '/workspace/media/Udacity/projects/CarND-Behavioral-Cloning-P3/data'
@@ -55,13 +69,17 @@ class Dataset:
                 for index, batch_sample in batch_samples.iterrows():
                     filename = batch_sample[self.img_name].split('/')[-1]
                     im = imread(os.path.join(self.data_dir, 'IMG', filename))
+                    label = batch_sample[self.label_name]
                     images.append(im)
-                    angles.append(batch_sample[self.label_name])
+                    angles.append(label)
+                
+                images, angles = augment(images, angles)
 
                 # trim image to only see section with road
                 X_train = np.array(images)
                 y_train = np.array(angles)
                 yield shuffle(X_train, y_train)
+
                 
 from keras.layers import Conv2D, MaxPooling2D
 
@@ -76,10 +94,32 @@ def LeNet(inp, n_classes):
     return Dense(n_classes)(fc2)
 
 
+
+def NvidiaBehavioral(inp, n_classes):
+    conv1 = Conv2D(24, 5, 5, activation='relu')(inp)
+    conv1 = MaxPooling2D()(conv1)
+    conv2 = Conv2D(36, 5, 5, activation='relu')(conv1)
+    conv2 = MaxPooling2D()(conv2)
+    conv3 = Conv2D(48, 5, 5, activation='relu')(conv2)
+    conv3 = MaxPooling2D()(conv3)
+    conv4 = Conv2D(64, 3, 3, activation='relu')(conv3)
+    conv5 = Conv2D(64, 3, 3, activation='relu')(conv4)
+    fc0 = Flatten()(conv5)
+    fc1 = Dense(100)(fc0)
+    fc2 = Dense(50)(fc1)
+    fc3 = Dense(10)(fc2)
+    return Dense(n_classes)(fc3)
+
+
+def preprocessing_layers(inp):
+    inp_proc = Lambda(lambda x: x / 255. - 0.5)(inp)
+    inp_proc = Cropping2D(cropping=((50,20), (0,0)))(inp_proc)
+    return inp_proc
+
 def create_model(input_shape):
     inp = Input(input_shape)
-    inp_proc = Lambda(lambda x: x / 255. - 0.5)(inp)
-    out = LeNet(inp_proc, 1)
+    inp_proc = preprocessing_layers(inp)
+    out = NvidiaBehavioral(inp_proc, 1)
 
     model = Model(inp, out)
     model.compile( 'adam' , 'mse')
@@ -90,7 +130,8 @@ if __name__ == '__main__':
     
     ## Input Data
 
-    data_dir = '/workspace/media/Udacity/projects/CarND-Behavioral-Cloning-P3/data'
+    base_dir = '/workspace/media/Udacity/projects/CarND-Behavioral-Cloning-P3/'
+    data_dir = base_dir + 'data/'
     data_csv = os.path.join(data_dir, 'driving_log.csv')
 
     df = pd.read_csv(data_csv, header='infer')
@@ -101,7 +142,7 @@ if __name__ == '__main__':
 
     ## Creating the generators
 
-    datagen = Dataset(len(df_split))
+    datagen = DatasetGenerator(len(df_split))
     train_generator = datagen.generator(df_split)
     validation_generator = datagen.generator(df_split, mode='validate')
 
@@ -115,10 +156,13 @@ if __name__ == '__main__':
 
     model = create_model(input_shape)
 
-    model.fit_generator(train_generator, samples_per_epoch= 
-                datagen.n_train, validation_data=validation_generator, 
-                nb_val_samples=datagen.n_val, nb_epoch=4)
+    model.fit_generator(train_generator, steps_per_epoch = len(df_split)*0.8, validation_data=validation_generator, 
+                 validation_steps = len(df_split)*0.2, nb_epoch=2)
 
-    model.save('model.h5')
+    model_dir = os.path.join(base_dir, 'models')
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
+    model.save(os.path.join(model_dir, 'model_lenet_augmented.h5'))
 
     ##
