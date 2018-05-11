@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from keras.layers import Dense, Flatten, Input, Lambda, Cropping2D
 from keras.models import Model, Sequential
+from keras.callbacks import TensorBoard, ModelCheckpoint
 
 
 def create_split(df):
@@ -40,8 +41,8 @@ def augment(images, labels):
 # TODO: upgrade to Keras Sequential
 class DatasetGenerator:
     
-    def __init__(self, datasize, img_name = 'value', label_name='steering', validation_split=0.2):
-        self.data_dir = '/workspace/media/Udacity/projects/CarND-Behavioral-Cloning-P3/data'
+    def __init__(self, datasize, data_dir, img_name = 'value', label_name='steering', validation_split=0.2):
+        self.data_dir = data_dir
         self.validation_split = validation_split
         self.n_samples = datasize
         self.n_train = int((1 - self.validation_split) * self.n_samples)
@@ -126,12 +127,20 @@ def create_model(input_shape):
     # model.fit(X_train, y_train, batch_size=128, epochs=5, validation_split=0.2, shuffle=True)
     return model
 
+def get_callbacks():
+    tensorboard = TensorBoard(log_dir='./logs', histogram_freq=0, batch_size=32, write_graph=True, write_grads=False, write_images=False, embeddings_freq=0, embeddings_layer_names=None, embeddings_metadata=None)
+    chkpt_models = './chkpt'
+    if not os.path.exists(chkpt_models):
+        os.makedirs(chkpt_models)
+    chkpt = ModelCheckpoint(chkpt_models, monitor='val_loss', verbose=0, save_best_only=False, save_weights_only=False, mode='auto', period=1)
+    return [tensorboard, chkpt]
+
 if __name__ == '__main__':
     
     ## Input Data
 
     base_dir = '/workspace/media/Udacity/projects/CarND-Behavioral-Cloning-P3/'
-    data_dir = base_dir + 'data/'
+    data_dir = base_dir + 'train-straight+curve+recover/'
     data_csv = os.path.join(data_dir, 'driving_log.csv')
 
     df = pd.read_csv(data_csv, header='infer')
@@ -142,7 +151,7 @@ if __name__ == '__main__':
 
     ## Creating the generators
 
-    datagen = DatasetGenerator(len(df_split))
+    datagen = DatasetGenerator(len(df_split), data_dir)
     train_generator = datagen.generator(df_split)
     validation_generator = datagen.generator(df_split, mode='validate')
 
@@ -156,13 +165,15 @@ if __name__ == '__main__':
 
     model = create_model(input_shape)
 
+
+    # TODO: Make the callbacks work again
     model.fit_generator(train_generator, steps_per_epoch = len(df_split)*0.8, validation_data=validation_generator, 
-                 validation_steps = len(df_split)*0.2, nb_epoch=2)
+                 validation_steps = len(df_split)*0.2, nb_epoch=4)
 
     model_dir = os.path.join(base_dir, 'models')
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
-    model.save(os.path.join(model_dir, 'model_lenet_augmented.h5'))
+    model.save(os.path.join(model_dir, 'model_behavioral_custom_data.h5'))
 
     ##
